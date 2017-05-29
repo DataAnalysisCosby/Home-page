@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=windows-1252">
+    <title>Blog: JIT Compilation Without (Much) Assembler in GNU C</title>
+    <style>
+      /* A lot of this I got from looking at Russ Cox's website. */
+      .article {
+          padding: 0 2em;
+      }
+      .title {
+          text-align: center;
+      }
+      pre {
+          margin-left: 4em;
+          margin-right: 4em;
+      }
+      pre, code {
+          font-family: 'Courier', monospace;
+          /* font-size: 100%; */
+      }
+    </style>
+  </head>
+  <body>
+    <p><a href="index.html">Click here to go back to my home page.</a></p>
+    <div class="article">
+      <div class="title">
+	<h2>JIT Compilation Without (Much) Assembler in GNU C</h2>
+	By Matthew Plant
+      </div>
+	  <p>
+		I am now about to discuss what is certainly the most clever piece of programming I have ever written and arguably the most clever thing I have ever done in my 17 years of existence (although that's not really a telling measure; the only other contender for that title is when I responded "right now" to my teacher asking me "when do [I] lie?").
+	  </p>
+	  <p>
+		By the way, I have a feeling that I am not the first person to come up with this, but I shall discuss it anyway as it is an incredibly interesting technique.
+	  </p>
+	  <p>
+		
+		Anyway, a bit of background: I was writing a virtual machine and I wanted to add JIT support to it. I could not use an external library (including GNU lightning, although it is only header files)  for the task as I did not want the program to have any dependencies other than the standard library. Thus I had to write an assembler, something which was going to be exhausting as I wanted to implement at least three different architectures. It was certainly a stark inevitability.
+	  </p>
+	  <p>
+		An inevitability that I chose not to accept. The end result: JIT without ANY platform dependent assembly (there is one instance of using GCC's inline assembler, but it's with a JUMP instruction).
+	  </p>
+
+<p><b><i>WARNING:</i></b> this code is <i><b>DEEP MAGIC.</b></i>
+  <h3> Getting Started (Without Control Flow): </h3>
+<p>
+  GCC has a very useful extension to the C programming language that allows for taking the addresses of labels (see: http://gcc.gnu.org/onlinedocs/gcc/Labels-as-Values.html). What many people believe this is useful for is making jump tables, and it is. It is incredibly useful for that.
+</p>
+<p>
+  But more than that, this feature is enormously useful for JIT compilation.
+</p>
+<p>
+  
+  Let me explain. Firstly, we surround some blocks of code (that do not have any function calls within, I'll get to those later) with two labels. Then, we can load the code that is in between those two labels into a buffer. Finally, we jump to this buffer (thanks to GCC) and BLAMO!, we have JIT my friends! Here is an example of it in action:
+  </p>
+<pre>
+ #include <stdio.h>  
+ #include <stdlib.h>  
+ #include <sys/mman.h>  
+ void JIT ()  
+ {  
+	 void *dyn;  
+	 unsigned char *buff, *d;  
+	 int v = 0;  
+	 printf ("Address of...\n"  
+		 "inc_v = &#37;p\n"  
+		 "dec_v = &#37;p\n"  
+		 "jump_end = &#37;p\n"  
+		 "end = &#37;p\n", &amp;&amp;inc_v, &amp;&amp;dec_v, &amp;&amp;jump_end, &amp;&amp;end);  
+ #define COPY_SECTION(sec_s, sec_e, dest) ({               \  
+	 unsigned char *buff;                                   \  
+	 for (buff = &amp;&amp;sec_s; buff &lt &amp;&amp;sec_e; buff++, (dest)++) \  
+	       *(dest) = *buff; })  
+
+     /* Allocate. */  
+	    dyn = mmap (0, 1024,  
+                   PROT_READ | PROT_WRITE | PROT_EXEC,  
+			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);  
+     /* Here's our sample program,  
+      * inc,  
+      * inc,  
+      * inc,  
+      * dec,  
+      * done.  
+      */  
+     d = dyn;  
+     COPY_SECTION (inc_v, dec_v, d);  
+     COPY_SECTION (inc_v, dec_v, d);  
+     COPY_SECTION (inc_v, dec_v, d);  
+     COPY_SECTION (dec_v, jump_end, d);  
+     COPY_SECTION (jump_end, end, d);  
+     /* Now call the code. */  
+     goto *dyn;  
+ inc_v:  
+     v++;  
+ dec_v:  
+     v--;  
+ jump_end:  
+     __asm__ volatile ("jmp *&#37;0" :: "r" (&&end));  
+ end:  
+     printf ("Value of v: &#37;d\n", v);  
+     return;  
+ }
+</pre>
+<p>
+  You even have access to local symbols! Awesome!
+</p>
+<p>
+  However, there are some things to be careful of when using this method:
+</p>
+<ul>
+  <li>
+	You have to make sure that the compiler has <i>absolutely no way to consider the instructions unreachable</i>. Like many other compilers, GCC will remove anything that is determined via control flow graphs to not possibly be able to occur.
+  </li>
+  <li>
+	Be sure to jump back!
+  </li>
+</ul>
+<h3> How To Add Function Calls:</h3>
+<p>Normally function calls within the segments would not work, due to addresses being all different. To fix this, alias a function using a function pointer, and call that instead.</p>
+<h3>Final remarks:</h3>
+<p>
+  
+  I'll close this post by reiterating that I'm sure someone else has used this before. And this should be used carefully, as it can lead to some really obfuscated code.
+</p>
+</body>
+</html>

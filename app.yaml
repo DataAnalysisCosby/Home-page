@@ -1,0 +1,5 @@
+runtime: go
+env: flex
+handlers:
+- url: /.*
+  static_dir: /.
